@@ -11,9 +11,16 @@
 # 空文字なら IAM グループユーザーを作らない（アプリ SA のパスワード認証のみ）。
 developer_group = "devs@example.com"
 
-# Cloud Run に IAP 経由でアクセスを許可する Google Group。
-# 空文字なら IAP が無効化される（外部からアクセス不可になるので注意）。
-iap_allowed_group = "api-users@example.com"
+# API のアクセスモード:
+#   - "browser"  : Cloud Run IAP を有効化。ブラウザから OAuth でアクセスできる。
+#                  ターミナル/curl から叩くには手動で OAuth client を programmatic_clients に登録する必要あり。
+#   - "terminal" : IAP を無効化し、Google Group に直接 roles/run.invoker を付与。
+#                  `gcloud auth print-identity-token` の ID token で curl 可。ブラウザからは認証画面が出ない。
+access_mode = "browser"
+
+# アクセスを許可する Google Group（access_mode に応じて IAP 経由 or Cloud Run invoker として付与）。
+# 空文字ならバインドをスキップ（外部からアクセス不可になるので注意）。
+allowed_group = "api-users@example.com"
 
 # --- 任意: リソース名・リージョンの上書き（不要なら省略可） ---
 # region        = "asia-northeast1"

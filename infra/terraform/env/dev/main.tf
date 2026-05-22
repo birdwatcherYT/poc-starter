@@ -58,7 +58,8 @@ module "cloud_run" {
   db_name                     = module.cloud_sql.db_name
   app_user                    = module.cloud_sql.app_user
   app_user_password_secret_id = module.cloud_sql.app_user_password_secret_id
-  iap_allowed_group           = var.iap_allowed_group
+  access_mode                 = var.access_mode
+  allowed_group               = var.allowed_group
 }
 
 module "cloud_build_sa" {
