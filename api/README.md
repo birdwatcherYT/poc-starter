@@ -47,6 +47,15 @@ URL=$(terraform -chdir=../infra/terraform/env/dev output -raw service_uri)
 curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" "$URL/health"
 ```
 
+> ⚠️ 現状の Cloud Run IAP 構成では、素の `gcloud auth print-identity-token` は audience 不整合で 401 になる（IAP は OAuth client ID を audience に要求するが、Google-managed の client は audience として使えない仕様）。
+> 動作確認はブラウザで `$URL/health` を開く（IAP の OAuth フローで認証）のが最短。
+>
+> ターミナル叩きが必要なら次のいずれか:
+>   - OAuth client を手動作成し `gcloud iap settings set` で programmatic_clients allowlist に登録 → audience にその client ID を指定
+>   - terraform 側で IAP を外し `run.invoker` 直付与に切り替え（実験で動作確認済み）
+>
+> 詳細は `../infra/terraform/modules/cloud_run/main.tf` のコメント参照。
+
 ## デプロイ
 
 初回 / 全体のセットアップ手順は [`../infra/README.md`](../infra/README.md) を参照。API のみを更新したいときは:
