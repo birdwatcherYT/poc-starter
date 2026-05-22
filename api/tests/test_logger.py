@@ -1,7 +1,7 @@
 """src/logger.py の振る舞いを担保する unit / integration test。
 
 - `_to_payload`: 構造化ログ用に Pydantic モデルを JSON 安全な dict に変換する
-- `log_request`: Cloud Run の trace ヘッダーが StructuredLogHandler の出力に載る
+- `log_request`: Cloud Run の trace ヘッダーが JSON ログに載る
 """
 
 import json
@@ -64,7 +64,7 @@ def test_log_request_emits_trace_from_cloud_header(
 ) -> None:
     """Cloud Run の X-Cloud-Trace-Context が log_request の JSON ログに載ること。
 
-    ミドルウェアで ContextVar に trace を入れ、StructuredLogHandler 経由で
+    ミドルウェアで ContextVar に trace を入れ、CloudLoggingJsonFormatter 経由で
     `logging.googleapis.com/trace` / `spanId` が出力される end-to-end を検証する。
     """
     monkeypatch.setenv("LOG_FORMAT", "json")

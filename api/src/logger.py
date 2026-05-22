@@ -1,7 +1,8 @@
 """アプリケーション用ロガー。
 
 - LOG_FORMAT=text（ローカル既定）: 色付き 1 行フォーマットで stdout に出力。
-- LOG_FORMAT=json または K_SERVICE が設定されている（Cloud Run）場合: google-cloud-logging の StructuredLogHandler を使う。
+- LOG_FORMAT=json または K_SERVICE が設定されている（Cloud Run）場合:
+  Cloud Logging 互換 JSON で stdout に出力する。
 - Cloud Run 上では stdout の JSON を自動で Cloud Logging に集約する。
 
 ヘルパー:
@@ -15,8 +16,6 @@ import os
 import sys
 from typing import Any
 
-from google.cloud.logging_v2.handlers import StructuredLogHandler
-
 from .trace_context import get_span_id, get_trace_id
 
 _LEVEL_COLORS = {
@@ -28,6 +27,34 @@ _LEVEL_COLORS = {
 }
 _RESET = "\033[0m"
 _DIM = "\033[2m"
+
+
+class CloudLoggingJsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload: dict[str, object] = {
+            "severity": record.levelname,
+            "message": record.getMessage(),
+            "logger": record.name,
+        }
+
+        trace_id = get_trace_id()
+        if trace_id:
+            project = os.getenv("GOOGLE_CLOUD_PROJECT")
+            payload["logging.googleapis.com/trace"] = (
+                f"projects/{project}/traces/{trace_id}" if project else trace_id
+            )
+            span_id = get_span_id()
+            if span_id:
+                payload["logging.googleapis.com/spanId"] = span_id
+
+        extra = getattr(record, "extra_fields", None)
+        if isinstance(extra, dict):
+            payload.update(extra)
+
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+
+        return json.dumps(payload, ensure_ascii=False, default=str)
 
 
 class HumanReadableFormatter(logging.Formatter):
@@ -65,45 +92,16 @@ def _is_cloud_logging() -> bool:
     return bool(os.getenv("K_SERVICE"))
 
 
-def _build_cloud_handler() -> logging.Handler:
-    project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
-    return StructuredLogHandler(project=project_id)
-
-
-class _TraceFilter(logging.Filter):
-    """trace_id / span_id を Cloud Logging のフィールドとして付与する。"""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        trace_id = get_trace_id()
-        if trace_id:
-            project = os.getenv("GOOGLE_CLOUD_PROJECT")
-            if project:
-                trace = f"projects/{project}/traces/{trace_id}"
-            else:
-                trace = trace_id
-            # CloudLoggingFilter が先に走るので、整形済みフィールドを上書きする。
-            record._trace = trace
-            record._trace_str = trace
-            span_id = get_span_id()
-            if span_id:
-                record._span_id = span_id
-                record._span_id_str = span_id
-        extra = getattr(record, "extra_fields", None)
-        if isinstance(extra, dict):
-            json_fields = record.__dict__.setdefault("json_fields", {})
-            json_fields.update(extra)
-        return True
+def _build_formatter() -> logging.Formatter:
+    if _is_cloud_logging():
+        return CloudLoggingJsonFormatter()
+    return HumanReadableFormatter()
 
 
 def configure_logging(level: str | None = None) -> None:
     log_level = (level or os.getenv("LOG_LEVEL") or "INFO").upper()
-
-    if _is_cloud_logging():
-        handler: logging.Handler = _build_cloud_handler()
-        handler.addFilter(_TraceFilter())
-    else:
-        handler = logging.StreamHandler(sys.stdout)
-        handler.setFormatter(HumanReadableFormatter())
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(_build_formatter())
 
     root = logging.getLogger()
     root.handlers = [handler]
