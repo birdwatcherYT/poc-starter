@@ -1,0 +1,14 @@
+.git
+.gitignore
+.github/
+.venv/
+__pycache__/
+*.pyc
+.ruff_cache/
+.pytest_cache/
+
+infra/
+database/migrations/
+docs/
+.DS_Store
+*.md

@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install uv
+      - run: uv sync --dev
+      - name: ruff format --check
+        run: uv run ruff format --check .
+      - name: ruff check
+        run: uv run ruff check .
+
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install uv
+      - run: uv sync --dev
+      # Testcontainers が PostgreSQL を起動し、conftest が golang-migrate で
+      # migrations を適用するので、ホスト側で DB を別途用意する必要はない。
+      - name: pytest
+        run: uv run pytest -v
+
+  terraform-fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+      - name: terraform fmt -check -recursive
+        run: terraform fmt -check -recursive infra/terraform

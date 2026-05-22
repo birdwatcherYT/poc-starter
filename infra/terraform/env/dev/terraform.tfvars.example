@@ -1,0 +1,23 @@
+# `cp terraform.tfvars.example terraform.tfvars` してから値を埋めて使う。
+# 実値の terraform.tfvars は .gitignore 済み（プロジェクト ID やグループ名は環境固有のためコミットしない）。
+#
+# project_id は `make set-project PROJECT_ID=<id>` で自動書き込みされるので
+# このファイルで設定する必要は通常ない（直接書いてもよい）。
+# project_id = "your-gcp-project-id"
+
+# --- 任意: アクセス制御 ---
+
+# Cloud SQL に IAM 認証で接続する開発者の Google Group。
+# 空文字なら IAM グループユーザーを作らない（アプリ SA のパスワード認証のみ）。
+developer_group = "devs@example.com"
+
+# Cloud Run に IAP 経由でアクセスを許可する Google Group。
+# 空文字なら IAP が無効化される（外部からアクセス不可になるので注意）。
+iap_allowed_group = "api-users@example.com"
+
+# --- 任意: リソース名・リージョンの上書き（不要なら省略可） ---
+# region        = "asia-northeast1"
+# service_name  = "poc-starter-api"
+# instance_name = "poc-starter-db"
+# db_name       = "poc"
+# image_tag     = "latest"
