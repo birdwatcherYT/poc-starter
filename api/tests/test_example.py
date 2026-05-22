@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def client(app_db_env: None, clean_example_messages: None) -> Iterator[TestClient]:
+    """DB 環境変数設定・テーブルクリア後に FastAPI アプリの TestClient を返す。"""
     from api import app
 
     with TestClient(app) as c:

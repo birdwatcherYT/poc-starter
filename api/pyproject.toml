@@ -10,7 +10,6 @@ dependencies = [
   "psycopg[binary,pool]>=3.2",
   "python-dotenv>=1.0",
   "pydantic>=2.8",
-  "google-cloud-logging>=3.10",
 ]
 
 [dependency-groups]
