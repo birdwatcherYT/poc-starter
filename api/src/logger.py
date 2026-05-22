@@ -15,6 +15,8 @@ import os
 import sys
 from typing import Any
 
+from google.cloud.logging_v2.handlers import StructuredLogHandler
+
 from .trace_context import get_span_id, get_trace_id
 
 _LEVEL_COLORS = {
@@ -64,8 +66,6 @@ def _is_cloud_logging() -> bool:
 
 
 def _build_cloud_handler() -> logging.Handler:
-    from google.cloud.logging_v2.handlers import StructuredLogHandler
-
     project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
     return StructuredLogHandler(project=project_id)
 
@@ -78,14 +78,16 @@ class _TraceFilter(logging.Filter):
         if trace_id:
             project = os.getenv("GOOGLE_CLOUD_PROJECT")
             if project:
-                record.__dict__["logging.googleapis.com/trace"] = (
-                    f"projects/{project}/traces/{trace_id}"
-                )
+                trace = f"projects/{project}/traces/{trace_id}"
             else:
-                record.__dict__["logging.googleapis.com/trace"] = trace_id
+                trace = trace_id
+            # CloudLoggingFilter が先に走るので、整形済みフィールドを上書きする。
+            record._trace = trace
+            record._trace_str = trace
             span_id = get_span_id()
             if span_id:
-                record.__dict__["logging.googleapis.com/spanId"] = span_id
+                record._span_id = span_id
+                record._span_id_str = span_id
         extra = getattr(record, "extra_fields", None)
         if isinstance(extra, dict):
             json_fields = record.__dict__.setdefault("json_fields", {})
@@ -121,8 +123,12 @@ def _to_payload(obj: Any) -> object:
     if obj is None:
         return None
     if hasattr(obj, "model_dump"):
-        return obj.model_dump()
-    if isinstance(obj, dict | list | str | int | float | bool):
+        return obj.model_dump(mode="json")
+    if isinstance(obj, dict):
+        return {k: _to_payload(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_to_payload(v) for v in obj]
+    if isinstance(obj, str | int | float | bool):
         return obj
     return repr(obj)
 
