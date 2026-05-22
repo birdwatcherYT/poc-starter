@@ -12,20 +12,24 @@ terraform {
 }
 
 locals {
-  iap_enabled = var.iap_allowed_group != ""
+  browser_mode    = var.access_mode == "browser"
+  terminal_mode   = var.access_mode == "terminal"
+  iap_enabled     = local.browser_mode && var.allowed_group != ""
+  invoker_enabled = local.terminal_mode && var.allowed_group != ""
 }
 
 # iap_enabled は GA されたが、stable provider への反映待ちのため google-beta を使う。
 # 将来 provider 7.x で stable に下りたらこの provider 指定を消せる。
 #
-# トレードオフ: この構成（Cloud Run IAP）はブラウザ OAuth フローで簡単に通せるが、ターミナルから curl / runner で叩くには追加の手動セットアップが必要:
-#   - 素の `gcloud auth print-identity-token`（audience 未指定）は Cloud Run IAM 直向けの token になり、IAP の audience チェックで 401。
-#   - IAP の Google-managed OAuth client は audience として使えない仕様。
-#   - 手動で OAuth client を作り `gcloud iap settings set` で programmatic_clients allowlist に登録すれば、その client ID を audience として token を発行できる（https://cloud.google.com/iap/docs/sharing-oauth-clients 参照）。
-#     ただし OAuth 同意画面の設定など Console での手動操作が必要で terraform 化困難。
-#
-# ターミナル叩きを最優先するなら IAP を外し、Google Group に直接 roles/run.invoker を付与する設計に切り替える（実験で動作確認済み）。
-# 具体的には iap_enabled / 関連 IAM を消し、`google_cloud_run_v2_service_iam_member` で run.invoker を group に付与。
+# access_mode によるトレードオフ:
+#   - "browser": Cloud Run IAP を有効化。ブラウザ OAuth フローで簡単に通せるが、ターミナルから curl / runner で叩くには追加の手動セットアップが必要:
+#       - 素の `gcloud auth print-identity-token`（audience 未指定）は Cloud Run IAM 直向けの token になり、IAP の audience チェックで 401。
+#       - IAP の Google-managed OAuth client は audience として使えない仕様。
+#       - 手動で OAuth client を作り `gcloud iap settings set` で programmatic_clients allowlist に登録すれば、その client ID を audience として token を発行できる（https://cloud.google.com/iap/docs/sharing-oauth-clients 参照）。
+#         ただし OAuth 同意画面の設定など Console での手動操作が必要で terraform 化困難。
+#   - "terminal": IAP を外し、Google Group に直接 roles/run.invoker を付与（実験で動作確認済み）。
+#       `gcloud auth print-identity-token` で取得した ID token をそのまま Authorization ヘッダに載せれば叩ける。
+#       ブラウザからは認証画面が出ないため、ブラウザアクセスの用途には向かない。
 resource "google_cloud_run_v2_service" "this" {
   provider    = google-beta
   project     = var.project_id
@@ -113,12 +117,23 @@ resource "google_cloud_run_v2_service_iam_member" "iap_sa_invoker" {
   member   = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-iap.iam.gserviceaccount.com"
 }
 
-# IAP 経由のアクセスを許可する Google Group を指定。
+# IAP 経由のアクセスを許可する Google Group を指定（browser モード）。
 resource "google_iap_web_cloud_run_service_iam_member" "iap_group_access" {
   count                  = local.iap_enabled ? 1 : 0
   project                = data.google_project.current.number
   location               = var.region
   cloud_run_service_name = google_cloud_run_v2_service.this.name
   role                   = "roles/iap.httpsResourceAccessor"
-  member                 = "group:${var.iap_allowed_group}"
+  member                 = "group:${var.allowed_group}"
+}
+
+# terminal モードでは IAP を介さず、Google Group に直接 roles/run.invoker を付与する。
+# ID token (audience = Cloud Run URL) で叩けるようになる。
+resource "google_cloud_run_v2_service_iam_member" "group_invoker" {
+  count    = local.invoker_enabled ? 1 : 0
+  project  = var.project_id
+  location = google_cloud_run_v2_service.this.location
+  name     = google_cloud_run_v2_service.this.name
+  role     = "roles/run.invoker"
+  member   = "group:${var.allowed_group}"
 }

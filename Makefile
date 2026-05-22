@@ -19,6 +19,10 @@ fmt: ## api / infra のフォーマットをまとめて実行
 	$(MAKE) -C api fmt
 	$(MAKE) -C infra fmt
 
+test: ## api の pytest と infra の terraform validate をまとめて実行
+	$(MAKE) -C api test
+	$(MAKE) -C infra validate
+
 # ----- デプロイ（api + migrate-job を束ねる）-----
 
 build: ## Cloud Build に api / migrate を非同期投入（PROJECT_ID 必須）
@@ -37,4 +41,4 @@ build-deploy: ## 同期ビルド後に api / migrate-job を更新
 	$(MAKE) -C api build-deploy
 	$(MAKE) -C database build-deploy
 
-.PHONY: help api api-docker fmt build build-sync deploy build-deploy
+.PHONY: help api api-docker fmt test build build-sync deploy build-deploy
