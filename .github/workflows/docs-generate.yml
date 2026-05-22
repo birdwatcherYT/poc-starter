@@ -1,0 +1,50 @@
+name: Generate API Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "api/**"
+      - "!docs/**"
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node.js (Redocly CLI 用)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - run: pip install uv
+      - run: uv sync --no-dev
+
+      - name: Generate openapi.json + index.html
+        run: uv run scripts/generate_docs.py
+
+      - name: Commit if changed
+        working-directory: .
+        run: |
+          if [[ -n $(git status --porcelain docs/openapi.json docs/index.html) ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add docs/openapi.json docs/index.html
+            git commit -m "chore: regenerate API docs [skip ci]"
+            git push
+          else
+            echo "No changes to API docs"
+          fi

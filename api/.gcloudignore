@@ -1,0 +1,23 @@
+.git
+.gitignore
+.gcloudignore
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.ruff_cache/
+.pytest_cache/
+
+# 開発用、本番イメージには不要
+tests/
+scripts/
+docs/
+*.md
+
+# 環境固有
+.env
+.env.*
+!.env.example
+.DS_Store

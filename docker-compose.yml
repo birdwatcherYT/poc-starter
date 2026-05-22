@@ -1,0 +1,38 @@
+services:
+  postgres:
+    build: ./database
+    container_name: poc_postgres
+    environment:
+      POSTGRES_DB: ${DB_NAME:-poc}
+      POSTGRES_USER: ${DB_USER:-app_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-app_password}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-app_user} -d ${DB_NAME:-poc}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ./api
+    container_name: poc_api
+    env_file:
+      - ./api/.env
+    environment:
+      DB_HOST: postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./api/src:/app/src:ro
+      - ./api/static:/app/static:ro
+      - ./api/api.py:/app/api.py:ro
+
+volumes:
+  pg_data:
