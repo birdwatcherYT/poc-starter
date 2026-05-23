@@ -14,7 +14,7 @@ import os
 from logging.config import fileConfig
 from urllib.parse import quote_plus
 
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import create_engine, pool
 
 import schema.models  # noqa: F401  schema.models の __init__.py が全モデルを Base.metadata に登録するために import する
 from alembic import context
@@ -58,12 +58,13 @@ def _build_url() -> str:
     return f"postgresql+psycopg://{auth}@{host}:{port}/{name}"
 
 
-config.set_main_option("sqlalchemy.url", _build_url())
+# sqlalchemy.url を alembic.ini 経由で渡さない。quote_plus 後の % が ConfigParser の
+# 補間構文と衝突するため（cloudsql-migrate 等で Secret Manager のパスワード使用時）。
 
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=config.get_main_option("sqlalchemy.url"),
+        url=_build_url(),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -75,11 +76,7 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    connectable = create_engine(_build_url(), poolclass=pool.NullPool)
 
     with connectable.connect() as connection:
         context.configure(

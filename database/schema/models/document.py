@@ -2,7 +2,7 @@
 
 `embedding` は埋め込みベクトル。サンプルとして 384 次元にしてある（軽量な多言語モデル paraphrase-multilingual-MiniLM-L12-v2 などを想定）。実際の埋め込みモデルに合わせて次元数は調整する。
 
-近傍検索は ORM 式で書ける:
+近傍検索は ORM 式で書ける（`documents_embedding_hnsw_idx` でコサイン距離検索を加速）:
 
     from sqlalchemy import select
     from schema.models import Document
@@ -15,7 +15,7 @@
 """
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import BigInteger, Identity, Text, func
+from sqlalchemy import BigInteger, Identity, Index, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import TIMESTAMP
 
@@ -39,4 +39,13 @@ class Document(Base):
         TIMESTAMP(timezone=True),
         server_default=func.now(),
         nullable=False,
+    )
+
+    __table_args__ = (
+        Index(
+            "documents_embedding_hnsw_idx",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
     )
