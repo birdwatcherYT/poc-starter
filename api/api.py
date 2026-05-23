@@ -71,3 +71,4 @@ async def root() -> FileResponse:
 
 
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+
