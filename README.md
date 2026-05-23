@@ -19,6 +19,7 @@ PoC を本番運用に乗せる前提の FastAPI + PostgreSQL スターター。
 - FastAPI + SQLAlchemy + Pydantic
 - 動作確認用 Web UI（FastAPI + HTML + JS）
 - 機能追加の雛形（router / service / schema + runner）
+- 書き方のサンプル（messages / documents）
 - 構造化ログ / トレース（text / Cloud Logging 互換 JSON、W3C traceparent）
 - Cloud Run 向け Dockerfile（multi-stage + gunicorn）
 
