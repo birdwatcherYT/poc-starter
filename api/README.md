@@ -47,4 +47,4 @@ uv run scripts/messages_runner.py                               # ローカル
 BASE_URL=https://xxx.run.app uv run scripts/messages_runner.py  # 本番（gcloud identity token 自動付与）
 ```
 
-本番へのアクセス可否は infra 側の設定に依存。詳細は [`../infra/README.md`](../infra/README.md)。
+本番へのアクセス可否は infra 側の `access_mode` / `allowed_group` に依存。詳細は [`../infra/README.md`](../infra/README.md#api-へのアクセス制御)。
