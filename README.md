@@ -1,6 +1,45 @@
 # poc-starter
 
-PoC を本番運用に乗せる前提の FastAPI + PostgreSQL スターター。
+PoC を本番運用に乗せる前提の FastAPI + PostgreSQL スターター。機能追加に集中できるよう、横断的な面倒ごとは最初から済ませてある。
+
+## 整備済み
+
+### ローカル開発
+
+- ローカル PostgreSQL 環境（pgvector 付き）
+- docker compose 環境
+
+### アプリケーション
+
+- FastAPI + SQLAlchemy + Pydantic
+- 動作確認用 Web UI（FastAPI + html + js）
+- 機能追加の雛形（router / service / schema + runner）
+- 構造化ログ / トレース（text / Cloud Logging 互換 JSON、W3C traceparent）
+- Cloud Run 向け Dockerfile（multi-stage + gunicorn）
+
+### データベース
+
+- SQLAlchemy スキーマ定義
+- Alembic migration 対応（autogenerate / 差分チェック）
+- Cloud SQL 対応（proxy / Cloud Run Job）
+- Cloud SQL Studio の IAM ログイン
+
+### 品質・CI
+
+- ruff / pre-commit
+- pytest + Testcontainers
+- GitHub Actions CI（lint / test / terraform / migrate-check）
+
+### ドキュメント
+
+- OpenAPI 仕様 / Redocly UI の自動生成
+- GitHub Pages 公開対応
+
+### インフラ（GCP）
+
+- Terraform（Cloud Run / Cloud SQL / Artifact Registry / Cloud Build SA / migrate Job）
+- IAP / Google Group によるアクセス制御
+- Cloud Build デプロイ対応
 
 ## 開発
 
