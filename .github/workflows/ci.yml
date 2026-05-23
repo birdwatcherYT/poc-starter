@@ -9,9 +9,12 @@ on:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        project: [api, database]
     defaults:
       run:
-        working-directory: api
+        working-directory: ${{ matrix.project }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -36,8 +39,7 @@ jobs:
           python-version: "3.12"
       - run: pip install uv
       - run: uv sync --dev
-      # Testcontainers が PostgreSQL を起動し、conftest が golang-migrate で
-      # migrations を適用するので、ホスト側で DB を別途用意する必要はない。
+      # Testcontainers が PostgreSQL を起動し、conftest が alembic でmigrations を適用するので、ホスト側で DB を別途用意する必要はない。
       - name: pytest
         run: uv run pytest -v
 
@@ -60,3 +62,20 @@ jobs:
           terraform_version: 1.6.6
       - name: terraform validate (dev)
         run: make -C infra validate ENV=dev
+
+  migrate-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install uv
+      - name: Start postgres with pgvector
+        run: docker compose up -d --wait postgres
+      - name: Apply migrations and check schema drift
+        working-directory: database
+        run: |
+          uv sync --dev
+          make migrate-up
+          make migrate-check

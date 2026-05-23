@@ -5,7 +5,8 @@
 -include ../api/.env
 export
 
-MIGRATE_IMAGE := migrate/migrate:v4.17.0
+# Alembic は database 自身の pyproject.toml で管理。uv の自動同期で venv が作られる。
+ALEMBIC := uv run alembic
 
 # --- デプロイ用変数（api/Makefile と揃える） ---
 PROJECT_ID ?= $(GOOGLE_CLOUD_PROJECT)
@@ -17,42 +18,57 @@ BUILD_SA   ?= cloud-build-sa@$(PROJECT_ID).iam.gserviceaccount.com
 
 # ローカル開発用デフォルト（docker-compose.yml の defaults と一致させること）。
 # 環境変数で上書き可能。本番に流す場合は DB_URL を直接指定する。
-DB_HOST     ?= host.docker.internal
+DB_HOST     ?= localhost
 DB_PORT     ?= 5432
 DB_NAME     ?= poc
 DB_USER     ?= app_user
 DB_PASSWORD ?= app_password
 
-DB_URL ?= postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable
+# env.py 側で DB_HOST/DB_PORT/... から URL を組むので、ここでは DB_URL は組まない。
+# DB_URL を明示的に渡したい場合（リモート接続など）はシェル env で上書きすれば
+# env.py が優先採用する。
+export DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD
 
 help: ## ヘルプを表示
-	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
+	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-24s\033[0m %s\n", $$1, $$2}'
 
-gen-migrate: ## up/down マイグレーションファイルを作成（NAME=xxx）
-	@test -n "$(NAME)" || (echo "使い方: make gen-migrate NAME=<name>" && exit 1)
-	@TS=$$(date +%s); \
-	 touch migrations/$${TS}_$(NAME).up.sql \
-	       migrations/$${TS}_$(NAME).down.sql; \
-	 echo "Created migrations/$${TS}_$(NAME).{up,down}.sql"
+fmt: ## ruff format と ruff check --fix
+	uv run ruff format .
+	uv run ruff check --fix .
+
+lint: ## ruff format --check と ruff check
+	uv run ruff format --check .
+	uv run ruff check .
+
+gen-migrate: ## 新しい migration を作成（NAME=xxx、デフォルトはモデル差分から自動生成、EMPTY=1 で空雛形）
+	@test -n "$(NAME)" || (echo "使い方: make gen-migrate NAME=<name> [EMPTY=1]" && exit 1)
+	$(ALEMBIC) -c $(CURDIR)/alembic.ini revision $(if $(EMPTY),,--autogenerate) -m "$(NAME)"
 
 migrate-up: ## ローカル DB に全マイグレーションを適用
-	docker run --rm --network host \
-	  -v $(CURDIR)/migrations:/migrations \
-	  $(MIGRATE_IMAGE) -path=/migrations -database="$(DB_URL)" up
+	$(ALEMBIC) -c $(CURDIR)/alembic.ini upgrade head
 
 migrate-down: ## ローカル DB のマイグレーションを 1 ステップ戻す
-	docker run --rm --network host \
-	  -v $(CURDIR)/migrations:/migrations \
-	  $(MIGRATE_IMAGE) -path=/migrations -database="$(DB_URL)" down 1
+	$(ALEMBIC) -c $(CURDIR)/alembic.ini downgrade -1
 
 migrate-down-all: ## ローカル DB を全 migration 分 down する（リモート DB は拒否）
-	@echo "$(DB_URL)" | grep -qE "host\.docker\.internal|localhost|127\.0\.0\.1" \
-	  || (echo "ローカル DB 以外には実行を拒否します（DB_URL=$(DB_URL)）" && exit 1)
-	docker run --rm --network host \
-	  -v $(CURDIR)/migrations:/migrations \
-	  $(MIGRATE_IMAGE) -path=/migrations -database="$(DB_URL)" down -all
+	@case "$(DB_HOST)" in \
+	  localhost|127.0.0.1|host.docker.internal) ;; \
+	  *) echo "ローカル DB 以外には実行を拒否します（DB_HOST=$(DB_HOST)）"; exit 1 ;; \
+	 esac
+	$(ALEMBIC) -c $(CURDIR)/alembic.ini downgrade base
 
-# --- リモート Cloud SQL 操作（cloud-sql-proxy 経由） ---
+migrate-status: ## 現在の DB に適用済みのリビジョンを表示
+	$(ALEMBIC) -c $(CURDIR)/alembic.ini current
+
+migrate-history: ## migration の履歴を表示
+	$(ALEMBIC) -c $(CURDIR)/alembic.ini history
+
+migrate-check: ## schema/models/ と DB に差分が無いか確認（差分があれば exit 1）
+	$(ALEMBIC) -c $(CURDIR)/alembic.ini check
+
+# --- Cloud SQL 操作（cloudsql-*） ---
+# proxy 経由: 別ターミナルで cloudsql-proxy を起動してから cloudsql-psql / cloudsql-migrate / cloudsql-grant。
+# Job 経由: cloudsql-migrate-job（cloud-sql-proxy 不要）。
 # ※ 値の取得は terraform / gcloud にネットワーク I/O を伴うため、`$(shell ...)` を
 #    トップレベルに書くと `make` を打つたびに数秒の待ちが発生する。
 #    そのため各 recipe 内で必要なときだけ shell で評価する。
@@ -75,22 +91,26 @@ cloudsql-proxy: ## cloud-sql-proxy を :5432 で起動（INSTANCE_CONNECTION_NAM
 	 echo "cloud-sql-proxy $$CONN --port 5432"; \
 	 exec cloud-sql-proxy $$CONN --port 5432
 
-migrate-cloudsql: require-cloud-project ## cloud-sql-proxy 経由でリモート DB にマイグレーション適用（ENV=dev|prod）
-	@SECRET=$$(terraform -chdir=$(TF_DIR_REL) output -raw app_user_password_secret_id 2>/dev/null || echo "poc-starter-db-app-user-password"); \
+cloudsql-psql: require-cloud-project ## cloud-sql-proxy 経由で Cloud SQL に psql 接続（別ターミナルで cloudsql-proxy 起動が必要）
+	@DB_NAME_VAL="$(DB_NAME)"; \
+	 DB_USER_VAL=$$(terraform -chdir=$(TF_DIR_REL) output -raw app_user 2>/dev/null || echo "app_user"); \
+	 if [ -z "$$DB_NAME_VAL" ]; then \
+	   DB_NAME_VAL=$$(terraform -chdir=$(TF_DIR_REL) output -raw db_name 2>/dev/null || echo "poc"); \
+	 fi; \
+	 SECRET=$$(terraform -chdir=$(TF_DIR_REL) output -raw app_user_password_secret_id 2>/dev/null || echo "poc-starter-db-app-user-password"); \
 	 PW=$$(gcloud secrets versions access latest --project=$(PROJECT_ID) --secret=$$SECRET 2>/dev/null | python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.stdin.read(),safe=""))'); \
+	 test -n "$$PW" || { echo "app_user パスワードが取得できません（project=$(PROJECT_ID) secret=$$SECRET）" >&2; exit 1; }; \
+	 echo "接続: $$DB_USER_VAL@localhost:5432/$$DB_NAME_VAL（cloud-sql-proxy が :5432 で待機していること）"; \
+	 exec psql "postgres://$$DB_USER_VAL:$$PW@localhost:5432/$$DB_NAME_VAL?sslmode=disable"
+
+cloudsql-migrate: require-cloud-project ## cloud-sql-proxy 経由でリモート DB にマイグレーション適用（ENV=dev|prod）
+	@SECRET=$$(terraform -chdir=$(TF_DIR_REL) output -raw app_user_password_secret_id 2>/dev/null || echo "poc-starter-db-app-user-password"); \
+	 PW=$$(gcloud secrets versions access latest --project=$(PROJECT_ID) --secret=$$SECRET 2>/dev/null); \
 	 test -n "$$PW" || { echo "app_user パスワードが Secret Manager から取得できません（project=$(PROJECT_ID) secret=$$SECRET）" >&2; exit 1; }; \
-	 docker run --rm \
-	   -v $(CURDIR)/migrations:/migrations \
-	   $(MIGRATE_IMAGE) -path=/migrations \
-	   -database="postgres://app_user:$$PW@host.docker.internal:5432/$(DB_NAME)?sslmode=disable" up
+	 DB_HOST=localhost DB_PORT=5432 DB_NAME=$(DB_NAME) DB_USER=app_user DB_PASSWORD="$$PW" \
+	   $(ALEMBIC) -c $(CURDIR)/alembic.ini upgrade head
 
-run-migrate-job: require-cloud-project ## 本番フロー: terraform で作られた migrate-job (Cloud Run Job) を実行
-	@JOB=$$(terraform -chdir=$(TF_DIR_REL) output -raw migrate_job_name 2>/dev/null); \
-	 REGION=$$(terraform -chdir=$(TF_DIR_REL) output -raw region 2>/dev/null || echo "asia-northeast1"); \
-	 test -n "$$JOB" || { echo "migrate_job_name が取得できません。terraform apply 済みか確認してください" >&2; exit 1; }; \
-	 gcloud run jobs execute $$JOB --region=$$REGION --project=$(PROJECT_ID) --wait
-
-grant-cloudsql: require-cloud-project ## cloud-sql-proxy 経由で seed/grants.sql を実行（terraform 設定から自動取得）
+cloudsql-grant: require-cloud-project ## cloud-sql-proxy 経由で seed/grants.sql を実行（terraform 設定から自動取得）
 	@TFVARS=$(TF_DIR_REL)/terraform.tfvars; \
 	 APP_USER_VAL="$(APP_USER)"; \
 	 DEV_GROUP_VAL="$(DEV_GROUP)"; \
@@ -111,6 +131,12 @@ grant-cloudsql: require-cloud-project ## cloud-sql-proxy 経由で seed/grants.s
 	   -v dev_group=$$DEV_GROUP_VAL \
 	   -v db_name=$$DB_NAME_VAL \
 	   -f seed/grants.sql
+
+cloudsql-migrate-job: require-cloud-project ## Cloud Run Job 経由で migrate を実行（cloud-sql-proxy 不要）
+	@JOB=$$(terraform -chdir=$(TF_DIR_REL) output -raw migrate_job_name 2>/dev/null); \
+	 REGION=$$(terraform -chdir=$(TF_DIR_REL) output -raw region 2>/dev/null || echo "asia-northeast1"); \
+	 test -n "$$JOB" || { echo "migrate_job_name が取得できません。terraform apply 済みか確認してください" >&2; exit 1; }; \
+	 gcloud run jobs execute $$JOB --region=$$REGION --project=$(PROJECT_ID) --wait
 
 COMPOSE := docker compose -f ../docker-compose.yml
 
@@ -154,4 +180,4 @@ deploy: require-project ## 現在の IMAGE_TAG で migrate-job の image を更�
 
 build-deploy: build-sync deploy ## 同期ビルド → migrate-job の image を更新
 
-.PHONY: help gen-migrate migrate-up migrate-down migrate-down-all migrate-cloudsql run-migrate-job grant-cloudsql cloudsql-proxy set-quota-project db-up db-down db-del psql require-project require-cloud-project build build-sync deploy build-deploy
+.PHONY: help fmt lint gen-migrate migrate-up migrate-down migrate-down-all migrate-status migrate-history migrate-check cloudsql-proxy cloudsql-psql cloudsql-migrate cloudsql-grant cloudsql-migrate-job set-quota-project db-up db-down db-del psql require-project require-cloud-project build build-sync deploy build-deploy

@@ -6,18 +6,105 @@
     "version": "0.1.0"
   },
   "paths": {
-    "/example/echo": {
+    "/messages": {
       "post": {
         "tags": [
-          "example"
+          "messages"
         ],
-        "summary": "Echo Endpoint",
-        "operationId": "echo_endpoint_example_echo_post",
+        "summary": "Create Message Endpoint",
+        "description": "メッセージを保存して、保存された行を返す。",
+        "operationId": "create_message_endpoint_messages_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMessageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "messages"
+        ],
+        "summary": "List Messages Endpoint",
+        "description": "保存されているメッセージを新しい順に返す。",
+        "operationId": "list_messages_endpoint_messages_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documents": {
+      "post": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Create Document Endpoint",
+        "description": "ドキュメントを embedding 付きで保存する（pgvector サンプル）。",
+        "operationId": "create_document_endpoint_documents_post",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/EchoRequest"
+                "$ref": "#/components/schemas/CreateDocumentRequest"
               }
             }
           },
@@ -29,7 +116,66 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EchoResponse"
+                  "$ref": "#/components/schemas/DocumentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documents/similar": {
+      "get": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Search Similar Documents Endpoint",
+        "description": "クエリ文字列に近いドキュメントをコサイン距離で返す（pgvector サンプル）。",
+        "operationId": "search_similar_documents_endpoint_documents_similar_get",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500,
+              "description": "検索クエリ文字列",
+              "title": "Q"
+            },
+            "description": "検索クエリ文字列"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 5,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SimilarSearchResponse"
                 }
               }
             }
@@ -76,7 +222,38 @@
   },
   "components": {
     "schemas": {
-      "EchoRequest": {
+      "CreateDocumentRequest": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "description": "ドキュメントのタイトル",
+            "examples": [
+              "猫の生態"
+            ]
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 5000,
+            "minLength": 1,
+            "title": "Content",
+            "description": "本文。これとタイトルを連結したものから埋め込みを作る（今はダミー）",
+            "examples": [
+              "猫は哺乳類で、夜行性の傾向がある。"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "content"
+        ],
+        "title": "CreateDocumentRequest",
+        "description": "`POST /documents` のリクエストボディ。"
+      },
+      "CreateMessageRequest": {
         "properties": {
           "message": {
             "type": "string",
@@ -109,10 +286,81 @@
         "required": [
           "message"
         ],
-        "title": "EchoRequest",
-        "description": "`POST /example/echo` のリクエストボディ。"
+        "title": "CreateMessageRequest",
+        "description": "`POST /messages` のリクエストボディ。"
       },
-      "EchoResponse": {
+      "DocumentResponse": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id",
+            "description": "DB が払い出した主キー"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "タイトル"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "本文"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At",
+            "description": "DB が記録した作成時刻"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "content",
+          "created_at"
+        ],
+        "title": "DocumentResponse",
+        "description": "ドキュメント 1 件分のレスポンス。embedding はレスポンスから除外する（重いため）。"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "MessageListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MessageResponse"
+            },
+            "type": "array",
+            "title": "Items",
+            "description": "保存されているメッセージの配列"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "返した件数"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "MessageListResponse",
+        "description": "`GET /messages` のレスポンス。"
+      },
+      "MessageResponse": {
         "properties": {
           "id": {
             "type": "integer",
@@ -150,21 +398,65 @@
           "author",
           "created_at"
         ],
-        "title": "EchoResponse",
-        "description": "`POST /example/echo` のレスポンス。保存した行をそのまま返す。"
+        "title": "MessageResponse",
+        "description": "メッセージ 1 件分のレスポンス。\n\n`from_attributes=True` により SQLAlchemy の `Message` インスタンスから直接 `MessageResponse.model_validate(orm_obj)` で構築できる。属性名と型が一致していることがランタイムでチェックされる。"
       },
-      "HTTPValidationError": {
+      "SimilarDocument": {
         "properties": {
-          "detail": {
-            "items": {
-              "$ref": "#/components/schemas/ValidationError"
-            },
-            "type": "array",
-            "title": "Detail"
+          "id": {
+            "type": "integer",
+            "title": "Id",
+            "description": "DB が払い出した主キー"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "タイトル"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "本文"
+          },
+          "distance": {
+            "type": "number",
+            "title": "Distance",
+            "description": "クエリとのコサイン距離（0=同一、2=逆向き）"
           }
         },
         "type": "object",
-        "title": "HTTPValidationError"
+        "required": [
+          "id",
+          "title",
+          "content",
+          "distance"
+        ],
+        "title": "SimilarDocument",
+        "description": "類似検索結果 1 件分。距離（コサイン距離）が小さいほど類似。"
+      },
+      "SimilarSearchResponse": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query",
+            "description": "検索クエリ（埋め込み化して比較した文字列）"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SimilarDocument"
+            },
+            "type": "array",
+            "title": "Items",
+            "description": "距離が小さい順の検索結果"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query",
+          "items"
+        ],
+        "title": "SimilarSearchResponse",
+        "description": "`GET /documents/similar` のレスポンス。"
       },
       "ValidationError": {
         "properties": {

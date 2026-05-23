@@ -5,7 +5,7 @@ ENV LC_ALL=ja_JP.UTF-8
 ENV TZ=Asia/Tokyo
 
 # 必要な PostgreSQL 拡張をここに追加する。
-# - pgvector: ベクトル検索（migrations の CREATE EXTENSION vector で有効化）
+# - pgvector: ベクトル検索（Alembic revision の CREATE EXTENSION vector で有効化）
 # 他に postgresql-16-postgis-3 などを追加したい場合は同じ行に並べる。
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \

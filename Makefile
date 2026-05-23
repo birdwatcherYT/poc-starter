@@ -15,9 +15,15 @@ api-docker: ## docker compose で DB + api をまとめて起動（migration 適
 
 # ----- 横断操作（複数コンポーネントにまたがるもの）-----
 
-fmt: ## api / infra のフォーマットをまとめて実行
+fmt: ## api / database / infra のフォーマットをまとめて実行
 	$(MAKE) -C api fmt
+	$(MAKE) -C database fmt
 	$(MAKE) -C infra fmt
+
+lint: ## api / database / infra の lint をまとめて実行（CI と同じチェック）
+	$(MAKE) -C api lint
+	$(MAKE) -C database lint
+	$(MAKE) -C infra fmt-check
 
 test: ## api の pytest と infra の terraform validate をまとめて実行
 	$(MAKE) -C api test
@@ -41,4 +47,4 @@ build-deploy: ## 同期ビルド後に api / migrate-job を更新
 	$(MAKE) -C api build-deploy
 	$(MAKE) -C database build-deploy
 
-.PHONY: help api api-docker fmt test build build-sync deploy build-deploy
+.PHONY: help api api-docker fmt lint test build build-sync deploy build-deploy

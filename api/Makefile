@@ -18,7 +18,7 @@ BUILD_SA      ?= cloud-build-sa@$(PROJECT_ID).iam.gserviceaccount.com
 help: ## ヘルプを表示
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
-run-docker: ## docker compose 経由で起動（postgres も depends_on で同時起動）
+run-docker: ## docker compose で api 起動（src / schema は bind mount）
 	docker compose -f ../docker-compose.yml up api
 
 run: ## uvicorn --reload で :8080 起動
@@ -36,23 +36,25 @@ lint: ## ruff format --check と ruff check
 	uv run ruff format --check .
 	uv run ruff check .
 
-test: ## pytest
-	uv run pytest -v
+test: ## pytest（Testcontainers で PG を立てる。gcloud 認証切れの docker credential helper を踏まないよう空の DOCKER_CONFIG を使う）
+	@mkdir -p /tmp/poc-starter-empty-docker-config && echo '{}' > /tmp/poc-starter-empty-docker-config/config.json
+	DOCKER_CONFIG=/tmp/poc-starter-empty-docker-config uv run pytest -v
 
 docs: ## docs/openapi.json と docs/index.html (Redocly HTML) を生成
 	uv run scripts/generate_docs.py
 
-docker-build: ## ローカルで docker build
-	docker build -t poc-starter-api:local .
+docker-build: ## compose 用 api イメージをビルド（Dockerfile / lock / 依存変更後）
+	docker compose -f ../docker-compose.yml build api
 
 require-project:
 	@test -n "$(PROJECT_ID)" || (echo "PROJECT_ID が必要です（GOOGLE_CLOUD_PROJECT を設定するか PROJECT_ID=... で渡してください）" && exit 1)
 
-# build / build-sync 共通の gcloud builds submit 引数
-BUILD_SUBMIT = gcloud builds submit . \
+# build context はリポ root（api/Dockerfile が database/ を参照するため）。
+# --config は cwd 基準で解決されるので、api/ から相対指定すると api/api/... になって失敗する。
+BUILD_SUBMIT = gcloud builds submit $(CURDIR)/.. \
 	--project=$(PROJECT_ID) \
 	--region=$(REGION) \
-	--config=cloudbuild.yaml \
+	--config=$(CURDIR)/cloudbuild.yaml \
 	--service-account=projects/$(PROJECT_ID)/serviceAccounts/$(BUILD_SA) \
 	--default-buckets-behavior=regional-user-owned-bucket \
 	--substitutions=_REGION=$(REGION),_AR_REPO=$(AR_REPO),_TAG=$(IMAGE_TAG)

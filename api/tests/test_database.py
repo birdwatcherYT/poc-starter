@@ -1,114 +1,101 @@
 """src/database.py の振る舞いを担保する integration test。
 
-特に重要なのは `pool.connection()` の context manager が以下を満たすこと:
+`Database.session()` の context manager が以下を満たすことを確認する:
 - 正常終了で commit する
 - 例外発生で rollback する
-- `transaction()` でラップした複数文がアトミックに扱われる
+- SQL エラーでも rollback する
+- 生 SQL（text(...)）と ORM の両方で動く
 
-これは psycopg3 公式が保証している挙動だが、誰かが将来コードを書き換えたとき気付けるようにテストで縛っておく。
+誰かが将来コードを書き換えたとき気付けるようにテストで縛っておく。
 """
 
-import psycopg
 import pytest
+from schema.models import Message
+from sqlalchemy import select, text
+from sqlalchemy.exc import ProgrammingError
 
 from src.database import Database
 
 
 def _count(db: Database) -> int:
-    return db.fetch("SELECT COUNT(*) AS c FROM example_messages")[0]["c"]
+    with db.session() as s:
+        return s.scalar(text("SELECT COUNT(*) FROM messages")) or 0
 
 
-def test_get_connection_commits_on_success(
-    db: Database, clean_example_messages: None
-) -> None:
+def test_session_commits_on_success(db: Database, clean_messages: None) -> None:
     """ブロックが正常終了したら自動 commit される。"""
-    with db.get_connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            "INSERT INTO example_messages (message) VALUES ('committed')",
-        )
+    with db.session() as s:
+        s.add(Message(message="committed"))
     assert _count(db) == 1
 
 
-def test_get_connection_rolls_back_on_exception(
-    db: Database, clean_example_messages: None
-) -> None:
+def test_session_rolls_back_on_exception(db: Database, clean_messages: None) -> None:
     """ブロック内で例外が起きたら INSERT は rollback される。"""
 
     class _Boom(Exception):
         pass
 
     with pytest.raises(_Boom):
-        with db.get_connection() as conn, conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO example_messages (message) VALUES ('should-rollback')"
-            )
+        with db.session() as s:
+            s.add(Message(message="should-rollback"))
+            s.flush()
             raise _Boom
 
     assert _count(db) == 0, "例外時に INSERT が rollback されず、行が残っている"
 
 
-def test_get_connection_rolls_back_on_sql_error(
-    db: Database, clean_example_messages: None
+def test_session_rolls_back_on_sql_error(db: Database, clean_messages: None) -> None:
+    """SQL エラーでも、それ以前の INSERT は rollback される。"""
+    with pytest.raises(ProgrammingError):
+        with db.session() as s:
+            s.add(Message(message="partial-fail"))
+            s.flush()
+            s.execute(text("SELECT no_such_column FROM messages"))
+
+    assert _count(db) == 0
+
+
+def test_session_groups_multiple_inserts_atomically(
+    db: Database, clean_messages: None
 ) -> None:
-    """ブロックの途中で SQL エラーが出ても、それ以前の INSERT は rollback される。"""
-    with pytest.raises(psycopg.errors.UndefinedColumn):
-        with db.get_connection() as conn, conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO example_messages (message) VALUES ('partial-fail')"
+    """同じ session 内の複数 INSERT は1トランザクションとして扱われ、後で失敗すると全部巻き戻る。"""
+    with pytest.raises(ProgrammingError):
+        with db.session() as s:
+            s.add(Message(message="a"))
+            s.add(Message(message="b"))
+            s.flush()
+            s.execute(text("SELECT no_such_column FROM messages"))
+
+    assert _count(db) == 0
+
+
+def test_orm_query_returns_typed_instances(db: Database, clean_messages: None) -> None:
+    """ORM クエリは Message インスタンスを返し、属性で値にアクセスできる。"""
+    with db.session() as s:
+        s.add(Message(message="hi", author="me"))
+
+    with db.session() as s:
+        row = s.scalars(select(Message)).one()
+        assert isinstance(row, Message)
+        assert row.message == "hi"
+        assert row.author == "me"
+        assert isinstance(row.id, int)
+        assert row.created_at is not None
+
+
+def test_raw_sql_with_named_params(db: Database, clean_messages: None) -> None:
+    """text() で生 SQL を叩き、:name 形式で bind パラメータを渡せる。"""
+    with db.session() as s:
+        s.add(Message(message="hi", author="me"))
+
+    with db.session() as s:
+        rows = (
+            s.execute(
+                text("SELECT message, author FROM messages WHERE message = :m"),
+                {"m": "hi"},
             )
-            cur.execute("SELECT no_such_column FROM example_messages")
-
-    assert _count(db) == 0
-
-
-def test_transaction_groups_multiple_statements_atomically(
-    db: Database, clean_example_messages: None
-) -> None:
-    """`db.transaction()` 内で複数 INSERT を実行し、後で失敗すると全部巻き戻る。"""
-    with pytest.raises(psycopg.errors.UndefinedColumn):
-        with db.transaction() as conn, conn.cursor() as cur:
-            cur.execute("INSERT INTO example_messages (message) VALUES ('a')")
-            cur.execute("INSERT INTO example_messages (message) VALUES ('b')")
-            cur.execute("SELECT no_such_column FROM example_messages")
-
-    assert _count(db) == 0
-
-
-def test_transaction_commits_when_block_completes(
-    db: Database, clean_example_messages: None
-) -> None:
-    """`db.transaction()` ブロックが正常終了すれば commit される。"""
-    with db.transaction() as conn, conn.cursor() as cur:
-        cur.execute("INSERT INTO example_messages (message) VALUES ('a')")
-        cur.execute("INSERT INTO example_messages (message) VALUES ('b')")
-
-    assert _count(db) == 2
-
-
-def test_execute_returns_rowcount(db: Database, clean_example_messages: None) -> None:
-    """execute() は影響行数（rowcount）を返す。"""
-    inserted = db.execute(
-        "INSERT INTO example_messages (message) VALUES ('x'), ('y'), ('z')"
-    )
-    assert inserted == 3
-
-    updated = db.execute(
-        "UPDATE example_messages SET author = %(a)s",
-        {"a": "all"},
-    )
-    assert updated == 3
-
-    deleted = db.execute("DELETE FROM example_messages")
-    assert deleted == 3
-
-
-def test_fetch_returns_dict_rows(db: Database, clean_example_messages: None) -> None:
-    """fetch() は dict_row なので key で値を取れる。"""
-    db.execute("INSERT INTO example_messages (message, author) VALUES ('hi', 'me')")
-    rows = db.fetch(
-        "SELECT message, author FROM example_messages WHERE message = %(m)s",
-        {"m": "hi"},
-    )
-    assert isinstance(rows[0], dict)
+            .mappings()
+            .all()
+        )
     assert rows[0]["message"] == "hi"
     assert rows[0]["author"] == "me"

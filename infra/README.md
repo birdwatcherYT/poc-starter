@@ -38,7 +38,7 @@ IAP / Cloud SQL の Google Group など任意設定もこの tfvars に追記す
 
 ```sh
 cat terraform/env/dev/terraform.tfvars.example >> terraform/env/dev/terraform.tfvars
-# その後エディタで値を埋める（developer_group / iap_allowed_group など）
+# その後エディタで値を埋める（developer_group / allowed_group など）
 ```
 
 ### 3. Terraform state bucket を作成
