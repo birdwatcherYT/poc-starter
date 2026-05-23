@@ -82,6 +82,19 @@ make -C infra apply
 
 [`../database/README.md`](../database/README.md) を参照。
 
+## API へのアクセス制御
+
+Cloud Run への外部アクセスは `terraform/env/<env>/terraform.tfvars` の `access_mode` と `allowed_group` で決まる（サンプルは [`terraform/env/dev/terraform.tfvars.example`](terraform/env/dev/terraform.tfvars.example)）。
+
+| `access_mode` | 用途 | 挙動 |
+|---|---|---|
+| `browser`（デフォルト） | ブラウザ | Cloud Run IAP を有効化。Google Group メンバーは OAuth でアクセスできる |
+| `terminal` | curl / runner | IAP を無効化し、Group に `roles/run.invoker` を付与。`gcloud auth print-identity-token` の ID token で叩ける |
+
+`allowed_group` が空だと外部からアクセスできない（バインドを作らない）。
+
+[`../api/scripts/`](../api/scripts/) の runner は `BASE_URL=https://...` で Bearer を自動付与する。`terminal` ならそのまま動く。`browser`（IAP）では runner / curl は追加セットアップが必要（[Sharing OAuth clients](https://cloud.google.com/iap/docs/sharing-oauth-clients)）。
+
 ## prod 環境
 
 `env/prod/` は雛形のみ。dev をコピーして使う想定:
