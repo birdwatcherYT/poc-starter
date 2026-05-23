@@ -13,18 +13,47 @@
     <main class="container">
       <h1>PoC Starter</h1>
       <p>FastAPI + PostgreSQL の動作確認用ページ。</p>
-      <form id="echo-form">
-        <label>
-          message
-          <input id="message" type="text" required value="hello" />
-        </label>
-        <label>
-          author (optional)
-          <input id="author" type="text" value="web" />
-        </label>
-        <button type="submit">POST /example/echo</button>
-      </form>
-      <pre id="out">(送信するとレスポンスが表示されます)</pre>
+
+      <section>
+        <h2>Messages</h2>
+        <form id="message-form">
+          <label>
+            message
+            <input id="message" type="text" required value="hello" />
+          </label>
+          <label>
+            author (optional)
+            <input id="author" type="text" value="web" />
+          </label>
+          <button type="submit">POST /messages</button>
+        </form>
+        <pre id="message-out">(送信するとレスポンスが表示されます)</pre>
+      </section>
+
+      <section>
+        <h2>Documents</h2>
+        <form id="document-form">
+          <label>
+            title
+            <input id="doc-title" type="text" required value="猫の生態" />
+          </label>
+          <label>
+            content
+            <textarea id="doc-content" required>猫は哺乳類で、夜行性の傾向がある。</textarea>
+          </label>
+          <button type="submit">POST /documents</button>
+        </form>
+        <pre id="document-out">(送信するとレスポンスが表示されます)</pre>
+
+        <form id="similar-form">
+          <label>
+            query
+            <input id="similar-query" type="text" required value="猫" />
+          </label>
+          <button type="submit">GET /documents/similar</button>
+        </form>
+        <pre id="similar-out">(検索すると結果が表示されます)</pre>
+      </section>
     </main>
     <script type="module" src="/static/app.js"></script>
   </body>

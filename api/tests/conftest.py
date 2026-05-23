@@ -1,19 +1,21 @@
 """テスト全体で共有する fixture。
 
 - Testcontainers で PostgreSQL（pgvector 入り）を起動
-- golang-migrate を docker run して `database/migrations` を適用
+- Alembic で `database/alembic/versions/` を適用（Python プロセス内で実行、docker 不要）
 - `Database` インスタンスとアプリ用 env をテストに提供
 
 ローカルでも GitHub Actions でも追加設定なしに動くよう、Docker ソケットを自動検出する。
 """
 
 import os
-import subprocess
 import time
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import text
 from testcontainers.core.image import DockerImage
 from testcontainers.postgres import PostgresContainer
 
@@ -21,7 +23,7 @@ from src.database import Database
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DATABASE_DIR = _REPO_ROOT / "database"
-_MIGRATIONS_DIR = _DATABASE_DIR / "migrations"
+_ALEMBIC_INI = _DATABASE_DIR / "alembic.ini"
 
 
 def _setup_docker_host() -> None:
@@ -62,48 +64,32 @@ _setup_docker_host()
 os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
 
 
-def _run_migrations(
-    container: PostgresContainer,
-) -> None:
-    """golang-migrate コンテナで migrations/ を適用する。
+def _run_migrations(container: PostgresContainer) -> None:
+    """Alembic で migrations を適用する。
 
-    Testcontainers の PG コンテナが居るネットワークに migrate コンテナを join
-    させ、コンテナ間で直接通信する。`--network host` は macOS / Linux で挙動が
-    違うので使わない。これでローカル（macOS / Rancher / Docker Desktop）と
-    GitHub Actions（Linux）の両方で同じく動く。
+    Python プロセス内で `alembic upgrade head` 相当を呼ぶ。docker は不要。
+    `env.py` は `DB_URL` を最優先で参照するので、ここでは testcontainer の
+    接続情報から URL を組んで渡す。
     """
-    pg_id = container.get_wrapped_container().id
-    pg_inspect = container.get_docker_client().client.api.inspect_container(pg_id)
-    pg_networks = pg_inspect["NetworkSettings"]["Networks"]
-    # Testcontainers は通常 "bridge" に置く。複数あれば最初を使う。
-    network_name, network_info = next(iter(pg_networks.items()))
-    # bridge は DNS 解決しないので IP アドレスを直接渡す（user-defined network なら
-    # コンテナ名で名前解決できるが、ここでは bridge デフォルト前提で両対応する）
-    pg_ip = network_info["IPAddress"]
-
+    host = container.get_container_host_ip()
+    port = int(container.get_exposed_port(5432))
     db_url = (
-        f"postgres://{container.username}:{container.password}"
-        f"@{pg_ip}:5432/{container.dbname}?sslmode=disable"
+        f"postgresql+psycopg://{container.username}:{container.password}"
+        f"@{host}:{port}/{container.dbname}"
     )
-    cmd = [
-        "docker",
-        "run",
-        "--rm",
-        "--network",
-        network_name,
-        "-v",
-        f"{_MIGRATIONS_DIR}:/migrations",
-        "migrate/migrate:v4.17.0",
-        "-path=/migrations",
-        f"-database={db_url}",
-        "up",
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"migrate に失敗しました (exit {result.returncode}):\n"
-            f"stdout: {result.stdout}\nstderr: {result.stderr}"
-        )
+
+    cfg = Config(str(_ALEMBIC_INI))
+    cfg.set_main_option("script_location", str(_DATABASE_DIR / "alembic"))
+    # env.py がこの env を読む。
+    prev = os.environ.get("DB_URL")
+    os.environ["DB_URL"] = db_url
+    try:
+        command.upgrade(cfg, "head")
+    finally:
+        if prev is None:
+            os.environ.pop("DB_URL", None)
+        else:
+            os.environ["DB_URL"] = prev
 
 
 @pytest.fixture(scope="session")
@@ -152,8 +138,7 @@ def db(postgres_container: PostgresContainer) -> Iterator[Database]:
         dbname=dbname,
         user=user,
         password=password,
-        min_size=1,
-        max_size=3,
+        pool_size=3,
     )
     try:
         yield instance
@@ -162,9 +147,17 @@ def db(postgres_container: PostgresContainer) -> Iterator[Database]:
 
 
 @pytest.fixture
-def clean_example_messages(db: Database) -> None:
-    """各テストの前に example_messages テーブルをクリアする。"""
-    db.execute("DELETE FROM example_messages")
+def clean_messages(db: Database) -> None:
+    """各テストの前に messages テーブルをクリアする。"""
+    with db.session() as s:
+        s.execute(text("DELETE FROM messages"))
+
+
+@pytest.fixture
+def clean_documents(db: Database) -> None:
+    """各テストの前に documents テーブルをクリアする。"""
+    with db.session() as s:
+        s.execute(text("DELETE FROM documents"))
 
 
 @pytest.fixture

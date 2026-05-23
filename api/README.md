@@ -6,48 +6,45 @@ FastAPI アプリ本体。リクエスト処理 / DB アクセス / ログ / 静
 
 ```
 api/
-├── api.py             # FastAPI エントリポイント（lifespan で Database 初期化、TraceContext 仕込み）
+├── api.py             # FastAPI エントリポイント
 ├── src/
-│   ├── database.py        # psycopg3 ConnectionPool ラッパー
-│   ├── logger.py          # LOG_FORMAT=text|json で出力切替、構造化ログヘルパー
+│   ├── database.py        # SQLAlchemy Engine + Session ラッパー
+│   ├── logger.py          # LOG_FORMAT=text|json 切替、構造化ログ
 │   ├── trace_context.py   # W3C traceparent を ContextVar で伝播
-│   └── example/           # 機能モジュールのサンプル（POST /example/echo）
-│       ├── router.py          # FastAPI ルーター（HTTP 層）
-│       ├── service.py         # ビジネスロジック / DB アクセス
-│       └── schema.py          # Pydantic の Request / Response モデル
-├── static/            # make run で配信される動作確認フォーム
+│   ├── messages/          # 機能 = 1 フォルダのサンプル（POST /messages, GET /messages）
+│   │   ├── router.py          # FastAPI ルーター（HTTP 層）
+│   │   ├── service.py         # ビジネスロジック / DB アクセス
+│   │   └── schema.py          # Pydantic の Request / Response モデル
+│   └── documents/         # pgvector + ベクトル検索のサンプル（POST /documents, GET /documents/similar）
+├── static/            # make run で配信される動作確認 UI（messages / documents）
 ├── tests/             # Testcontainers で PostgreSQL を立てる integration test
-├── scripts/           # 動作確認 runner（example_runner.py）と OpenAPI 生成（generate_docs.py）
-├── Dockerfile         # multi-stage build + gunicorn + uvicorn worker（Cloud Run 用）
-└── cloudbuild.yaml    # gcloud builds submit の build 定義
+├── scripts/           # 動作確認 runner と OpenAPI 生成
+├── Dockerfile         # multi-stage build + gunicorn（Cloud Run 用）
+└── cloudbuild.yaml
 ```
 
-## ローカル起動
+新しい機能を足すときは `src/<feature>/` に `router.py` / `service.py` / `schema.py` の 3 点セットを置き、`api.py` で `include_router(..., prefix="/<feature>")` する。動作確認用に `scripts/<feature>_runner.py` も足す。
+
+## 基本操作
+
+事前に DB を起動しておく（`make -C database db-up`）。
 
 ```sh
-make run    # uvicorn --reload で :8080 起動
-make test   # Testcontainers で pytest
+make run                                    # uvicorn --reload で :8080 起動
+make test                                   # Testcontainers で pytest
+make fmt                                    # ruff format + check --fix
+make build-deploy IMAGE_TAG=$(date +%s)     # Cloud Build → Cloud Run へデプロイ
 ```
 
-その他のターゲットは `make help`。
+`IMAGE_TAG` は可変にしておくと履歴を遡れる（latest 固定だと辿れないので本番では時刻 / SHA 推奨）。その他のターゲットは `make help`。
 
 ## scripts/
 
-新しいエンドポイントを足したら `example_runner.py` をコピーして `*_runner.py` を作る運用。共通の `make_client()` / `call()` は `_runner_common.py` 参照。
+新しいエンドポイントを足したら既存の `*_runner.py` をコピーして作る運用。共通ヘルパは `_runner_common.py`。
 
 ```sh
-uv run scripts/example_runner.py                                       # ローカル
-BASE_URL=https://xxx.run.app uv run scripts/example_runner.py          # 本番（gcloud identity token 自動付与）
+uv run scripts/messages_runner.py                               # ローカル
+BASE_URL=https://xxx.run.app uv run scripts/messages_runner.py  # 本番（gcloud identity token 自動付与）
 ```
 
-本番へのアクセス可否は infra 側の `var.access_mode` / `var.allowed_group` 設定に依存する。詳細は [`../infra/README.md`](../infra/README.md) と [`../infra/terraform/modules/cloud_run/main.tf`](../infra/terraform/modules/cloud_run/main.tf) を参照。
-
-## デプロイ
-
-初回 / 全体のセットアップ手順は [`../infra/README.md`](../infra/README.md) を参照。API のみを更新したいときは:
-
-```sh
-make build-deploy IMAGE_TAG=$(date +%s)
-```
-
-`IMAGE_TAG` を可変にしておくと履歴を遡れる（latest 固定だと辿れないので本番では時刻 / SHA 推奨）。
+本番へのアクセス可否は infra 側の設定に依存。詳細は [`../infra/README.md`](../infra/README.md)。

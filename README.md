@@ -1,6 +1,51 @@
 # poc-starter
 
-PoC を本番運用に乗せる前提の FastAPI + PostgreSQL スターター。
+PoC を本番運用に乗せる前提の FastAPI + PostgreSQL スターター。機能追加に集中できるよう、横断的な面倒ごとは最初から済ませてある。
+
+## 思想
+
+フロントは動作確認用の HTML + JS のみ。本格的な UI が必要になったら別途足す。
+バックエンド（API / DB / インフラ）は本番クオリティを保ち、フロントは使い捨て前提なら AI に書かせればよい。
+
+## 整備済み
+
+### ローカル開発
+
+- ローカル PostgreSQL 環境（pgvector 付き）
+- docker compose 環境
+
+### アプリケーション
+
+- FastAPI + SQLAlchemy + Pydantic
+- 動作確認用 Web UI（FastAPI + HTML + JS）
+- 機能追加の雛形（router / service / schema + runner）
+- 書き方のサンプル（messages / documents）
+- 構造化ログ / トレース（text / Cloud Logging 互換 JSON、W3C traceparent）
+- Cloud Run 向け Dockerfile（multi-stage + gunicorn）
+
+### データベース
+
+- SQLAlchemy スキーマ定義
+- Alembic migration 対応（autogenerate / 差分チェック）
+- Cloud SQL 対応（proxy / Cloud Run Job）
+- Cloud SQL Studio の IAM ログイン
+
+### 品質・CI
+
+- ruff / pre-commit
+- pytest + Testcontainers
+- GitHub Actions CI（lint / test / terraform / migrate-check）
+
+### ドキュメント
+
+- OpenAPI 仕様 / Redocly UI の自動生成
+- GitHub Pages 公開対応
+
+### インフラ（GCP）
+
+- Terraform（Cloud Run / Cloud SQL / Artifact Registry / Cloud Build SA / migrate Job）
+- IAP / Google Group によるアクセス制御
+- Cloud Build デプロイ対応
 
 ## 開発
 
@@ -12,7 +57,7 @@ cp api/.env.example api/.env
 make api   # postgres を起動して migration 適用 → api をローカル起動
 ```
 
-ブラウザで http://localhost:8080 を開いてフォームを送信すると `POST /example/echo` が DB に行を insert して、保存された行（id / created_at 付き）を返す。Request / Response スキーマのサンプルとして `api/src/example/schema.py` を参照。
+ブラウザで http://localhost:8080 を開くと `POST /messages` と `POST /documents` / `GET /documents/similar` を試せる。Request / Response スキーマのサンプルとして `api/src/messages/schema.py` と `api/src/documents/schema.py` を参照。
 
 わからないことは help で
 ```sh
@@ -28,12 +73,12 @@ make -C infra help      # Terraform
 
 ```
 .
-├── Makefile             # ルート横断の開発フロー（run / test / fmt / db-up / build-deploy など）
+├── Makefile             # ルート横断の開発フロー（api / test / fmt / build-deploy など）
 ├── README.md
 ├── docker-compose.yml
 ├── api/                 # FastAPI アプリ本体（README.md 参照）
-├── database/            # PostgreSQL Dockerfile と golang-migrate 形式の migrations
-├── docs/                # make docs の出力先（GitHub Pages のソース）
+├── database/            # PostgreSQL Dockerfile + SQLAlchemy スキーマ + Alembic マイグレーション
+├── docs/                # make -C api docs の出力先（GitHub Pages のソース）
 │   ├── openapi.json
 │   └── index.html
 └── infra/               # Terraform で GCP リソースを管理
@@ -41,7 +86,7 @@ make -C infra help      # Terraform
 
 ## API ドキュメント
 
-`make docs` で `docs/openapi.json` と `docs/index.html` を生成する（main マージ時は `.github/workflows/docs-generate.yml` が自動コミット）。
+`make -C api docs` で `docs/openapi.json` と `docs/index.html` を生成する（main マージ時は `.github/workflows/docs-generate.yml` が自動コミット）。
 
 GitHub Pages として公開するには:
 

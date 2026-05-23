@@ -18,7 +18,8 @@ services:
 
   api:
     build:
-      context: ./api
+      context: .
+      dockerfile: api/Dockerfile
     container_name: poc_api
     env_file:
       - ./api/.env
@@ -30,9 +31,10 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./api/src:/app/src:ro
-      - ./api/static:/app/static:ro
-      - ./api/api.py:/app/api.py:ro
+      - ./api/src:/app/api/src:ro
+      - ./api/static:/app/api/static:ro
+      - ./api/api.py:/app/api/api.py:ro
+      - ./database/schema:/app/database/schema:ro
 
 volumes:
   pg_data:

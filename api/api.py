@@ -11,8 +11,9 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from src.database import Database
-from src.example.router import router as example_router
+from src.documents.router import router as documents_router
 from src.logger import configure_logging, get_logger
+from src.messages.router import router as messages_router
 from src.trace_context import install as install_trace_middleware
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -54,7 +55,8 @@ app = FastAPI(
 
 install_trace_middleware(app)
 
-app.include_router(example_router, prefix="/example", tags=["example"])
+app.include_router(messages_router, prefix="/messages", tags=["messages"])
+app.include_router(documents_router, prefix="/documents", tags=["documents"])
 
 
 @app.get("/health", tags=["health"])

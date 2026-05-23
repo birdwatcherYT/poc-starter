@@ -1,32 +1,47 @@
-"""PostgreSQL コネクションプールのラッパー（psycopg3）。
+"""PostgreSQL アクセスのラッパー（SQLAlchemy 一本化）。
 
-DB_HOST の値に応じて 3 通りの接続経路をサポートする:
-- localhost（ローカル docker-compose もしくは cloud-sql-proxy 経由）
-- /cloudsql/<conn_name>（Cloud Run から Cloud SQL への Unix socket。psycopg がスラッシュ始まりを自動的に socket として扱う）
+DB_HOST の値に応じて 2 通りの接続経路をサポートする:
+- 通常のホスト名 / IP（ローカル docker-compose もしくは cloud-sql-proxy 経由）
+- `/cloudsql/<conn_name>` のような Unix socket パス（Cloud Run から Cloud SQL への直接接続。psycopg は `/` 始まりの host を自動的に socket として扱う）
 
-トランザクション挙動について:
-- `pool.connection()` は context 終了時に正常なら commit、例外なら rollback を自動で行う（psycopg3 公式ドキュメント保証）。
-- よって `execute()` / `fetch()` で明示的な commit / rollback は不要。
-- 複数文を 1 トランザクションにまとめたい場合は `with db.transaction() as conn:` を使う。
+トランザクション挙動:
+- `db.session()` は context 終了時に正常なら commit、例外なら rollback を自動で行う
+- 生 SQL を叩きたいときは `session.execute(text("..."))` を使う
 """
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any
+from urllib.parse import quote_plus
 
-import psycopg
-from psycopg.rows import dict_row
-from psycopg_pool import ConnectionPool
+from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
 
 from .logger import get_logger
 
 logger = get_logger(__name__)
 
 
-class Database:
-    """PostgreSQL の接続プールと簡易クエリヘルパーをまとめたクラス。
+def _build_sqlalchemy_url(
+    host: str, port: int, dbname: str, user: str, password: str
+) -> str:
+    """接続情報から SQLAlchemy URL を組む。
 
-    通常はアプリ起動時に 1 度だけインスタンス化し、`app.state.db` 経由で各ルーター / サービスから使い回す。
+    Unix socket (host が `/` で始まる) も Cloud SQL の Unix socket も
+    `host=` クエリで渡せば psycopg ドライバが解釈する。
+    """
+    auth = quote_plus(user)
+    if password:
+        auth = f"{auth}:{quote_plus(password)}"
+    if host.startswith("/"):
+        return f"postgresql+psycopg://{auth}@/{dbname}?host={host}"
+    return f"postgresql+psycopg://{auth}@{host}:{port}/{dbname}"
+
+
+class Database:
+    """SQLAlchemy Engine + sessionmaker のラッパー。
+
+    通常はアプリ起動時に 1 度だけインスタンス化し、`app.state.db` 経由で各ルーター・サービスから使い回す。
 
     使い方:
 
@@ -42,32 +57,33 @@ class Database:
         ...
         db.close()  # shutdown 時
 
-    単発の SELECT（dict のリストが返る）:
-        rows = db.fetch(
-            "SELECT id, name FROM users WHERE active = %(active)s",
-            {"active": True},
-        )
-        for row in rows:
-            print(row["id"], row["name"])
+    ORM クエリ（`schema.models.Message` などを使う）:
+        from sqlalchemy import select
+        from schema.models import Message
 
-    単発の INSERT / UPDATE / DELETE（影響行数を返す）:
-        n = db.execute(
-            "UPDATE users SET last_login = NOW() WHERE id = %(id)s",
-            {"id": user_id},
-        )
-        assert n == 1
+        with db.session() as s:
+            rows = s.scalars(select(Message).limit(10)).all()
+            for r in rows:
+                print(r.id, r.message)
 
-    複数文を 1 トランザクションにまとめる（途中で例外が出れば全体 rollback）:
-        with db.transaction() as conn, conn.cursor() as cur:
-            cur.execute("INSERT INTO pairs ... ")
-            cur.execute("INSERT INTO matchings ... ")
-            cur.execute("UPDATE users SET ... ")
+    ORM での insert（id / created_at は flush 後に DB から返って詰まる）:
+        with db.session() as s:
+            msg = Message(message="hi")
+            s.add(msg)
+            s.flush()
+            print(msg.id)
+        # ブロック終了で commit、例外なら rollback
 
-    生のコネクションを使いたいとき（cursor を細かく制御する場合など）:
-        with db.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("...")
-                conn.commit()  # 通常は不要（ブロック終了で自動 commit）
+    生 SQL を叩きたいとき:
+        from sqlalchemy import text
+
+        with db.session() as s:
+            rows = s.execute(
+                text("SELECT id, message FROM messages WHERE author = :a"),
+                {"a": "alice"},
+            ).mappings().all()
+            for r in rows:
+                print(r["id"], r["message"])
     """
 
     def __init__(
@@ -77,69 +93,52 @@ class Database:
         dbname: str,
         user: str,
         password: str = "",
-        min_size: int = 1,
-        max_size: int = 10,
-        connect_timeout: int = 10,
-        max_lifetime: int = 1800,
+        pool_size: int = 10,
+        max_overflow: int = 0,
+        pool_recycle: int = 1800,
     ) -> None:
-        conninfo = psycopg.conninfo.make_conninfo(
-            host=host,
-            port=port,
-            dbname=dbname,
-            user=user,
-            password=password,
-            connect_timeout=connect_timeout,
+        # pool_pre_ping=True: 借りる時に SELECT 1 で死活確認（Cloud SQL のアイドル切断対策）
+        # pool_recycle: 一定秒数経った接続は破棄して張り直す
+        self._engine: Engine = create_engine(
+            _build_sqlalchemy_url(host, port, dbname, user, password),
+            pool_size=pool_size,
+            max_overflow=max_overflow,
+            pool_pre_ping=True,
+            pool_recycle=pool_recycle,
+            future=True,
         )
-        self._pool = ConnectionPool(
-            conninfo=conninfo,
-            min_size=min_size,
-            max_size=max_size,
-            max_lifetime=max_lifetime,
-            check=ConnectionPool.check_connection,
-            open=True,
+        self._session_factory = sessionmaker(
+            bind=self._engine, expire_on_commit=False, class_=Session
         )
         logger.info(
-            "Database connection pool initialized",
+            "Database engine initialized",
             extra={
                 "extra_fields": {
                     "host": host,
                     "dbname": dbname,
-                    "min_size": min_size,
-                    "max_size": max_size,
+                    "pool_size": pool_size,
+                    "max_overflow": max_overflow,
                 }
             },
         )
 
     @contextmanager
-    def get_connection(self) -> Iterator[psycopg.Connection]:
-        """プールから接続を借りる。ブロック終了時に正常なら commit、例外なら rollback。"""
-        with self._pool.connection() as conn:
-            yield conn
+    def session(self) -> Iterator[Session]:
+        """SQLAlchemy の Session を借りる。
 
-    @contextmanager
-    def transaction(self) -> Iterator[psycopg.Connection]:
-        """複数文を 1 トランザクションにまとめる。途中で例外が出れば全体が rollback される。"""
-        with self._pool.connection() as conn, conn.transaction():
-            yield conn
-
-    def execute(self, sql: str, params: tuple | dict | None = None) -> int:
-        """SQL を実行して影響行数を返す（INSERT / UPDATE / DELETE 想定）。"""
-        with self._pool.connection() as conn, conn.cursor() as cur:
-            cur.execute(sql, params)
-            return cur.rowcount
-
-    def fetch(
-        self, sql: str, params: tuple | dict | None = None
-    ) -> list[dict[str, Any]]:
-        """SELECT を実行して dict のリストを返す。"""
-        with (
-            self._pool.connection() as conn,
-            conn.cursor(row_factory=dict_row) as cur,
-        ):
-            cur.execute(sql, params)
-            return cur.fetchall()
+        正常終了時に commit、例外時は rollback、いずれにせよ close。
+        """
+        sess = self._session_factory()
+        try:
+            yield sess
+            sess.commit()
+        except Exception:
+            sess.rollback()
+            raise
+        finally:
+            sess.close()
 
     def close(self) -> None:
-        """接続プールを閉じる。lifespan の shutdown で呼ぶ想定。"""
-        self._pool.close()
-        logger.info("Database connection pool closed")
+        """Engine を破棄してプール内のコネクションを全て閉じる。"""
+        self._engine.dispose()
+        logger.info("Database engine disposed")

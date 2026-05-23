@@ -1,7 +1,5 @@
-# API Cloud Build upload 除外（gcloud builds submit .. の context はリポ root）
+# API イメージ用 build context（リポ root）。database の path 依存を解決するため context は root。
 .git
-.gitignore
-.github/
 **/.venv
 **/__pycache__
 **/*.pyc
@@ -15,6 +13,4 @@ api/.env.*
 api/cloudbuild.yaml
 infra
 database/alembic
-docs/
-.DS_Store
 *.md

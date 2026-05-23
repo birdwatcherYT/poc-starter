@@ -1,5 +1,5 @@
 -- アプリ用サービスアカウント（BUILT_IN ユーザー）と開発者向け IAM グループへの
--- 冪等な GRANT。`make grant-cloudsql` または migration Cloud Run Job 経由で実行する。
+-- 冪等な GRANT。`make cloudsql-grant` または migration Cloud Run Job 経由で実行する。
 -- 変数は `psql -v` で渡す（db_name / app_user / dev_group）。
 
 -- アプリ用ユーザーへの権限付与

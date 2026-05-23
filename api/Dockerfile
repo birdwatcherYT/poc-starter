@@ -3,14 +3,14 @@ FROM python:3.12-slim AS builder
 
 ENV UV_LINK_MODE=copy
 
-WORKDIR /app
+WORKDIR /app/api
 
 RUN pip install --no-cache-dir uv
 
-# 依存ファイルのみコピーして cache レイヤーを効かせる
-COPY pyproject.toml uv.lock ./
+COPY api/pyproject.toml api/uv.lock ./
+COPY database/pyproject.toml database/uv.lock /app/database/
 
-# 本番用依存のみインストール（dev グループは入れない）
+# schema の .py は runtime で載せる。ここでは path 依存のメタデータだけで sync する
 RUN uv sync --frozen --no-dev
 
 # ===== Runtime Stage =====
@@ -28,16 +28,18 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+# builder と同じパスに venv を置く（/app/api/.venv へ移すと console_scripts の shebang が壊れる）
+WORKDIR /app/api
 
-# builder で作った venv をそのままコピー
-COPY --from=builder /app/.venv /app/.venv
-ENV PATH="/app/.venv/bin:$PATH"
+COPY --from=builder /app/api/.venv ./.venv
+ENV PATH="/app/api/.venv/bin:$PATH" \
+    PYTHONPATH="/app/database"
 
-# アプリ本体
-COPY src src
-COPY static static
-COPY api.py api.py
+# アプリ本体 + ORM モデル（base.py / __init__.py も import に必要）
+COPY api/src src
+COPY api/static static
+COPY api/api.py api.py
+COPY database/schema /app/database/schema
 
 # Cloud Run は PORT を自動で渡してくる。
 # WORKERS は CPU 数に応じて調整（Cloud Run は通常 1 CPU なので 1〜2 が無難）。

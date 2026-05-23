@@ -14,9 +14,9 @@ repos:
     hooks:
       - id: ruff
         args: [--fix]
-        files: ^api/
+        files: ^(api|database)/
       - id: ruff-format
-        files: ^api/
+        files: ^(api|database)/
 
   - repo: https://github.com/antonbabenko/pre-commit-terraform
     rev: v1.96.1

@@ -7,10 +7,13 @@ dependencies = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
   "gunicorn>=23.0",
-  "psycopg[binary,pool]>=3.2",
   "python-dotenv>=1.0",
   "pydantic>=2.8",
+  "poc-starter-database",
 ]
+
+[tool.uv.sources]
+poc-starter-database = { path = "../database" }
 
 [dependency-groups]
 dev = [

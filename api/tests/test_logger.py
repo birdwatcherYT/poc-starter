@@ -16,8 +16,8 @@ from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
-from src.example.schema import EchoRequest, EchoResponse
 from src.logger import _to_payload, configure_logging, log_request
+from src.messages.schema import CreateMessageRequest, MessageResponse
 from src.trace_context import install
 
 
@@ -25,11 +25,11 @@ from src.trace_context import install
     ("model", "expected"),
     [
         (
-            EchoRequest(message="hello", author="alice"),
+            CreateMessageRequest(message="hello", author="alice"),
             {"message": "hello", "author": "alice"},
         ),
         (
-            EchoResponse(
+            MessageResponse(
                 id=1,
                 message="hello",
                 author="alice",
@@ -45,12 +45,12 @@ from src.trace_context import install
     ],
 )
 def test_to_payload_is_json_serializable_for_request_and_response(
-    model: EchoRequest | EchoResponse,
+    model: CreateMessageRequest | MessageResponse,
     expected: dict[str, object],
 ) -> None:
     """log_request / log_response が body をログに載せる前に JSON 化できること。
 
-    EchoRequest（文字列のみ）と EchoResponse（datetime 含む）の両方で、
+    CreateMessageRequest（文字列のみ）と MessageResponse（datetime 含む）の両方で、
     `json.dumps` 可能な dict になることを確認する。datetime は ISO 8601 文字列になる。
     """
     payload = _to_payload(model)
