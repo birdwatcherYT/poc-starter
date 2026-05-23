@@ -6,28 +6,42 @@ on:
   push:
     branches: [main]
 
-jobs:
-  lint:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        project: [api, database]
-    defaults:
-      run:
-        working-directory: ${{ matrix.project }}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - run: pip install uv
-      - run: uv sync --dev
-      - name: ruff format --check
-        run: uv run ruff format --check .
-      - name: ruff check
-        run: uv run ruff check .
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
-  test:
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      api: ${{ steps.filter.outputs.api }}
+      database: ${{ steps.filter.outputs.database }}
+      infra: ${{ steps.filter.outputs.infra }}
+      workflow: ${{ steps.filter.outputs.workflow }}
+    steps:
+      # push イベントでは git diff で before/after を比較するため、最低 2 コミット必要。
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            api:
+              - 'api/**'
+              - '.pre-commit-config.yaml'
+            database:
+              - 'database/**'
+              - 'docker-compose.yml'
+              - '.pre-commit-config.yaml'
+            infra:
+              - 'infra/**'
+            workflow:
+              - '.github/workflows/ci.yml'
+
+  lint-api:
+    needs: changes
+    if: needs.changes.outputs.api == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -39,21 +53,62 @@ jobs:
           python-version: "3.12"
       - run: pip install uv
       - run: uv sync --dev
-      # Testcontainers が PostgreSQL を起動し、conftest が alembic でmigrations を適用するので、ホスト側で DB を別途用意する必要はない。
-      - name: pytest
-        run: uv run pytest -v
+      - name: lint
+        run: make lint
+
+  lint-database:
+    needs: changes
+    if: needs.changes.outputs.database == 'true' || needs.changes.outputs.workflow == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: database
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install uv
+      - run: uv sync --dev
+      - name: lint
+        run: make lint
+
+  test:
+    needs: changes
+    if: |
+      needs.changes.outputs.api == 'true' ||
+      needs.changes.outputs.database == 'true' ||
+      needs.changes.outputs.workflow == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install uv
+      - run: uv sync --dev
+      # Testcontainers が PostgreSQL を起動し、conftest が alembic で migrations を適用するので、ホスト側で DB を別途用意する必要はない。
+      - name: test
+        run: make test
 
   terraform-fmt:
+    needs: changes
+    if: needs.changes.outputs.infra == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
-      - name: terraform fmt -check -recursive
-        run: terraform fmt -check -recursive infra/terraform
+      - name: fmt-check
+        run: make -C infra fmt-check
 
   terraform-validate:
+    needs: changes
+    if: needs.changes.outputs.infra == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -64,6 +119,8 @@ jobs:
         run: make -C infra validate ENV=dev
 
   migrate-check:
+    needs: changes
+    if: needs.changes.outputs.database == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -79,3 +136,20 @@ jobs:
           uv sync --dev
           make migrate-up
           make migrate-check
+
+  # ブランチ保護の required check はこのジョブだけにする（下流が skipped でも pass）。
+  ci:
+    needs:
+      - changes
+      - lint-api
+      - lint-database
+      - test
+      - terraform-fmt
+      - terraform-validate
+      - migrate-check
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any job failed or was cancelled
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
