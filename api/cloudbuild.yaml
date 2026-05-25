@@ -8,13 +8,12 @@ options:
   logging: CLOUD_LOGGING_ONLY
 
 steps:
-  # 初回ビルドで latest が push された後にコメントを外す
-  # - id: pull-cache
-  #   name: gcr.io/cloud-builders/docker
-  #   entrypoint: bash
-  #   args:
-  #     - -c
-  #     - docker pull "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE}:latest" || true
+  - id: pull-cache
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - docker pull "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE}:latest" || true
 
   - id: build
     name: gcr.io/cloud-builders/docker
@@ -22,11 +21,11 @@ steps:
       - build
       - -f
       - api/Dockerfile
+      - --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE}:latest
       - -t
       - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE}:${_TAG}
       - -t
       - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE}:latest
-      # - --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE}:latest
       - .
 
 images:
