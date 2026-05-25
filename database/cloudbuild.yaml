@@ -4,24 +4,30 @@ substitutions:
   _IMAGE: migrate
   _TAG: latest
 
-images:
-  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE}:${_TAG}"
-
 options:
   logging: CLOUD_LOGGING_ONLY
 
 steps:
+  # 初回ビルドで latest が push された後にコメントを外す
+  # - id: pull-cache
+  #   name: gcr.io/cloud-builders/docker
+  #   entrypoint: bash
+  #   args:
+  #     - -c
+  #     - docker pull "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE}:latest" || true
+
   - id: build
     name: gcr.io/cloud-builders/docker
     args:
       - build
       - --file=migrate.Dockerfile
-      - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE}:${_TAG}
-      - --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE}:latest
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE}:${_TAG}
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE}:latest
+      # - --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE}:latest
       - .
 
-  - id: push
-    name: gcr.io/cloud-builders/docker
-    args:
-      - push
-      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE}:${_TAG}
+images:
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE}:${_TAG}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE}:latest
