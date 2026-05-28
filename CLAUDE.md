@@ -6,12 +6,14 @@
 
 - `from __future__ import annotations` を書かない（Python 3.12 前提、PEP 604 が標準で使える）
 - docstring・コメントは不自然な位置で改行しない。文として自然な切れ目でのみ改行
-- コメント・docstring は WHAT ではなく WHY を書く
+- コメントは日本語で書き、WHAT より WHY を重視する
 - 同一パッケージ内の依存は相対 import、外部パッケージ（`schema`, `sqlalchemy` 等）は絶対 import
 - import はファイル冒頭にまとめる。関数内・条件分岐内の遅延 import は書かない
 - try-except は外部境界で例外を別の形に変換する時、握りつぶしても問題ない時、後始末が必要な時だけ書く
 - 「ログを出して raise」するだけの try-except は書かない。FastAPI / uvicorn が自動で traceback を出すので二重ログになって本当の原因が埋もれる
 - Python を変更したら該当サブプロジェクトの fmt を実行（`make -C api fmt` / `make -C database fmt`）、Terraform を変更したら `make -C infra fmt`
+- `Any` 型をなるべく使わない
+- 型が一意に定まる場合は無駄な `if` の場合分けをしない
 
 ## ドキュメントの方針
 
