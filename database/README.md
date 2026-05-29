@@ -13,12 +13,21 @@ database/
 ├── Dockerfile           # postgres:16 + pgvector
 ├── migrate.Dockerfile   # Cloud Run Job 用 alembic コンテナ
 ├── Makefile
+├── examples/            # 利用例スクリプト
 └── seed/grants.sql      # Cloud SQL の GRANT
 ```
 
 api からは path 依存で参照され、ランタイムは `from schema.models import Message` のように使う。
 
 コマンドの一覧は `make help`。
+
+## ローカル開発
+
+```sh
+cp .env.example .env
+make db-up          # docker compose postgres 起動 + migrate
+make psql           # ローカル DB に接続
+```
 
 ## スキーマ変更の考え方
 
@@ -65,6 +74,7 @@ make cloudsql-proxy          # ターミナル A
 make cloudsql-migrate        # ターミナル B: Alembic upgrade
 make cloudsql-psql           # ターミナル B: psql 接続
 make cloudsql-grant          # ターミナル B: seed/grants.sql
+make cloudsql-reset          # ターミナル B: public スキーマごと初期化（データ全消去）
 ```
 
 Cloud Run Job 経由（本番フロー、proxy 不要）:
