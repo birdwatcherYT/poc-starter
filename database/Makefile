@@ -1,8 +1,6 @@
 .DEFAULT_GOAL := help
 
-# 共有設定は api/.env から取り込む（GOOGLE_CLOUD_PROJECT / DB_* など）。
-# 存在しなくてもエラーにしないため -include を使う。
--include ../api/.env
+-include .env
 export
 
 # Alembic は database 自身の pyproject.toml で管理。uv の自動同期で venv が作られる。
@@ -72,14 +70,11 @@ migrate-check: ## schema/models/ と DB に差分が無いか確認（差分が�
 # ※ 値の取得は terraform / gcloud にネットワーク I/O を伴うため、`$(shell ...)` を
 #    トップレベルに書くと `make` を打つたびに数秒の待ちが発生する。
 #    そのため各 recipe 内で必要なときだけ shell で評価する。
-# ※ PROJECT_ID は api/.env の GOOGLE_CLOUD_PROJECT を真実のソースとし、gcloud には
-#    常に --project で渡す。gcloud config のアクティブプロジェクトに依存しないため、
-#    複数 GCP プロジェクトを横断しても誤ったプロジェクトを叩く事故を防げる。
 ENV ?= dev
 TF_DIR_REL := ../infra/terraform/env/$(ENV)
 
 require-cloud-project:
-	@test -n "$(PROJECT_ID)" || { echo "GOOGLE_CLOUD_PROJECT が未設定です。先に make -C infra set-project PROJECT_ID=<id> を実行してください" >&2; exit 1; }
+	@test -n "$(PROJECT_ID)" || { echo "GOOGLE_CLOUD_PROJECT が未設定です。.env を作成するか PROJECT_ID=... を指定してください" >&2; exit 1; }
 
 set-quota-project: require-cloud-project ## ADC の quota project を PROJECT_ID に揃える（gcloud で 403 が出るとき用）
 	@echo "ADC quota project を $(PROJECT_ID) に設定"
@@ -138,6 +133,24 @@ cloudsql-migrate-job: require-cloud-project ## Cloud Run Job 経由で migrate �
 	 test -n "$$JOB" || { echo "migrate_job_name が取得できません。terraform apply 済みか確認してください" >&2; exit 1; }; \
 	 gcloud run jobs execute $$JOB --region=$$REGION --project=$(PROJECT_ID) --wait
 
+cloudsql-reset: require-cloud-project ## cloud-sql-proxy 経由でリモート DB を初期化（public スキーマごと作り直し→migrate→grant）。データ全消去、FORCE=1 で確認省略
+	@DB_NAME_VAL="$(DB_NAME)"; \
+	 if [ -z "$$DB_NAME_VAL" ]; then DB_NAME_VAL=$$(terraform -chdir=$(TF_DIR_REL) output -raw db_name 2>/dev/null || echo "poc"); fi; \
+	 if [ -z "$(FORCE)" ]; then \
+	   printf "リモート DB '%s'（project=%s）の public スキーマを破棄し全データを消去します。続行するには 'yes' と入力: " "$$DB_NAME_VAL" "$(PROJECT_ID)"; \
+	   read ans; [ "$$ans" = "yes" ] || { echo "中止しました"; exit 1; }; \
+	 fi; \
+	 SECRET=$$(terraform -chdir=$(TF_DIR_REL) output -raw app_user_password_secret_id 2>/dev/null || echo "poc-starter-db-app-user-password"); \
+	 PW=$$(gcloud secrets versions access latest --project=$(PROJECT_ID) --secret=$$SECRET 2>/dev/null | python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.stdin.read(),safe=""))'); \
+	 test -n "$$PW" || { echo "app_user パスワードが取得できません（project=$(PROJECT_ID) secret=$$SECRET）" >&2; exit 1; }; \
+	 printf "public スキーマを作り直します（DB=%s）\n" "$$DB_NAME_VAL"; \
+	 psql "postgres://app_user:$$PW@localhost:5432/$$DB_NAME_VAL?sslmode=disable" \
+	   -v ON_ERROR_STOP=1 \
+	   -c "DROP SCHEMA public CASCADE" \
+	   -c "CREATE SCHEMA public"
+	$(MAKE) cloudsql-migrate
+	$(MAKE) cloudsql-grant
+
 COMPOSE := docker compose -f ../docker-compose.yml
 
 db-up: ## ローカル postgres を起動して migration を適用
@@ -180,4 +193,4 @@ deploy: require-project ## 現在の IMAGE_TAG で migrate-job の image を更�
 
 build-deploy: build-sync deploy ## 同期ビルド → migrate-job の image を更新
 
-.PHONY: help fmt lint gen-migrate migrate-up migrate-down migrate-down-all migrate-status migrate-history migrate-check cloudsql-proxy cloudsql-psql cloudsql-migrate cloudsql-grant cloudsql-migrate-job set-quota-project db-up db-down db-del psql require-project require-cloud-project build build-sync deploy build-deploy
+.PHONY: help fmt lint gen-migrate migrate-up migrate-down migrate-down-all migrate-status migrate-history migrate-check cloudsql-proxy cloudsql-psql cloudsql-migrate cloudsql-grant cloudsql-migrate-job cloudsql-reset set-quota-project db-up db-down db-del psql require-project require-cloud-project build build-sync deploy build-deploy

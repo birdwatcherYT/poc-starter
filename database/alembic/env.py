@@ -12,13 +12,17 @@
 
 import os
 from logging.config import fileConfig
+from pathlib import Path
 from urllib.parse import quote_plus
 
+from dotenv import load_dotenv
 from sqlalchemy import create_engine, pool
 
 import schema.models  # noqa: F401  schema.models の __init__.py が全モデルを Base.metadata に登録するために import する
 from alembic import context
 from schema.base import Base
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 target_metadata = Base.metadata
 
